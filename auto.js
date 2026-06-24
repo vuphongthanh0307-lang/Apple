@@ -100,7 +100,7 @@ function createBot() {
 
         // 1.5. LÌ LỢM ĐĂNG NHẬP
         if (lowerMsg.includes('đăng nhập bằng lệnh: /dn') || lowerMsg.includes('vui lòng đăng nhập')) {
-            setTimeout(() => bot.chat('/dn Windvu@2#1#9#30849009630'), 1500); 
+            setTimeout(() => bot.chat('/dn 18112007'), 1500); 
         }
 
         // BƯỚC 1: NHẬN DIỆN SONAR ĐANG QUÉT
@@ -344,7 +344,7 @@ async function clearJunk() {
     }
 }
 
-// --- MODULE 2: CẤT RƯƠNG (BẢN FIX CHỐNG KẸT LOG) ---
+// --- MODULE 2: CẤT RƯƠNG (BẢN MỚI CHỐNG KẸT RƯƠNG KHUẤT TƯỜNG) ---
 async function depositAllKeepOneStack() {
     const carrots = currentBot.inventory.items().filter(item => item.name === 'carrot');
     let totalCarrots = carrots.reduce((sum, item) => sum + item.count, 0);
@@ -355,16 +355,52 @@ async function depositAllKeepOneStack() {
     }
 
     console.log(`[+] Đang mở rương cất Cà rốt... (Hiện có: ${totalCarrots} củ)`);
-    const chestBlock = currentBot.findBlock({ matching: currentBot.registry.blocksByName.chest.id, maxDistance: 4 });
     
-    // [FIX]: Nếu không thấy rương, in log và thoát ngay, không lặp lại lỗi
+    // Tìm các rương trong phạm vi 4 block
+    const chestPositions = currentBot.findBlocks({
+        matching: currentBot.registry.blocksByName.chest.id,
+        maxDistance: 4,
+        count: 5
+    });
+
+    let chestBlock = null;
+    for (const pos of chestPositions) {
+        const block = currentBot.blockAt(pos);
+        if (block) {
+            // 1. Kiểm tra tầm nhìn của bot đến rương (Tránh rương sau tường chắn)
+            const canSee = currentBot.canSeeBlock(block);
+
+            // 2. Kiểm tra xem phía trên rương có bị chặn bởi block rắn không (để nắp rương mở được)
+            const blockAbove = currentBot.blockAt(pos.offset(0, 1, 0));
+            const isAboveBlocked = blockAbove && 
+                                   blockAbove.boundingBox === 'block' && 
+                                   !['air', 'cave_air', 'chest', 'trapped_chest', 'glass', 'slab', 'stair'].some(name => blockAbove.name.includes(name));
+
+            if (canSee && !isAboveBlocked) {
+                chestBlock = block;
+                break; // Chọn chiếc rương trống trải, hợp lý đầu tiên
+            }
+        }
+    }
+
+    // Phương án dự phòng (fallback): Nếu không có rương nào thỏa mãn tầm nhìn, lấy rương gần nhất
+    if (!chestBlock && chestPositions.length > 0) {
+        chestBlock = currentBot.blockAt(chestPositions[0]);
+        console.log('[!] Cảnh báo: Không tìm thấy rương có tầm nhìn thoáng, sử dụng rương gần nhất làm dự phòng...');
+    }
+
     if (!chestBlock) {
         console.log('[-] Lỗi: Điểm mù, không thấy cái rương nào quanh đây!');
         return; 
     }
 
     try {
-        const chest = await currentBot.openChest(chestBlock);
+        // [CẢI TIẾN]: Giới hạn thời gian mở rương tối đa là 3.5 giây bằng Promise.race để phòng ngừa kẹt treo 20 giây
+        const chest = await Promise.race([
+            currentBot.openChest(chestBlock),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Quá thời gian mở rương (3.5s)')), 3500))
+        ]);
+
         await sleep(500); 
 
         let toDeposit = totalCarrots - 64;
@@ -382,8 +418,7 @@ async function depositAllKeepOneStack() {
         await sleep(500); 
         console.log('[+] Đã gom sạch cà rốt vào kho!');
     } catch (err) {
-        // [FIX]: Nếu lỗi mở rương (timeout), log ra để biết và thoát hàm để bot tiếp tục đi farm
-        console.log('[-] Lỗi tương tác rương (Server không trả lời): ', err.message);
+        console.log('[-] Lỗi tương tác rương: ', err.message);
         if (currentBot.currentWindow) currentBot.closeWindow(currentBot.currentWindow); 
         await sleep(1000); // Đợi 1 giây rồi bỏ qua, cho bot đi farm tiếp
     }
@@ -469,15 +504,13 @@ async function fastEquip(itemId) {
     const hasItem = currentBot.inventory.items().find(i => i.type === itemId);
     if (!hasItem) return false; 
 
-    // Tắt tính năng ép slot thủ công (setQuickBarSlot) vì dễ gây xung đột packet
     try { 
         await currentBot.equip(itemId, 'hand'); 
         
-        // KIỂM TRA CHÉO: Xác nhận lại 100% trên tay đã cầm đồ thật chưa
         if (currentBot.heldItem && currentBot.heldItem.type === itemId) {
             return true; 
         }
-        return false; // Lên đồ xịt do ping cao -> Báo false để farmSuperFast đứng chờ
+        return false; 
     } catch (e) {
         return false; 
     }
@@ -509,7 +542,6 @@ async function farmSuperFast() {
         await currentBot.lookAt(cropPos.offset(0.5, 0.5, 0.5), true);
 
         if (cropBlock.name === 'air') {
-            // [!] ĐỔI THÀNH CÀ RỐT (carrot.id)
             const isReady = await fastEquip(currentBot.registry.itemsByName.carrot.id);
             if (!isReady) {
                 await sleep(500); 
@@ -518,7 +550,6 @@ async function farmSuperFast() {
             sendInteractPacket(pos); 
             await sleep(50); 
         }
-        // [!] ĐỔI THÀNH CÂY CÀ RỐT (carrots)
         else if (cropBlock.name === 'carrots' && cropBlock.metadata < 7) {
             const isReady = await fastEquip(currentBot.registry.itemsByName.dye.id);
             if (!isReady) {
@@ -528,7 +559,6 @@ async function farmSuperFast() {
             sendInteractPacket(cropPos); 
             await sleep(50); 
         }
-        // [!] ĐỔI THÀNH CÂY CÀ RỐT (carrots)
         else if (cropBlock.name === 'carrots' && cropBlock.metadata === 7) {
             try {
                 await currentBot.dig(cropBlock);
