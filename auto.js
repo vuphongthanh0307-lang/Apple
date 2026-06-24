@@ -344,7 +344,7 @@ async function clearJunk() {
     }
 }
 
-// --- MODULE 2: CẤT RƯƠNG (Đổi thành Carrot) ---
+// --- MODULE 2: CẤT RƯƠNG (BẢN FIX CHỐNG KẸT LOG) ---
 async function depositAllKeepOneStack() {
     const carrots = currentBot.inventory.items().filter(item => item.name === 'carrot');
     let totalCarrots = carrots.reduce((sum, item) => sum + item.count, 0);
@@ -356,7 +356,12 @@ async function depositAllKeepOneStack() {
 
     console.log(`[+] Đang mở rương cất Cà rốt... (Hiện có: ${totalCarrots} củ)`);
     const chestBlock = currentBot.findBlock({ matching: currentBot.registry.blocksByName.chest.id, maxDistance: 4 });
-    if (!chestBlock) return console.log('[-] Lỗi: Điểm mù, không thấy cái rương nào!');
+    
+    // [FIX]: Nếu không thấy rương, in log và thoát ngay, không lặp lại lỗi
+    if (!chestBlock) {
+        console.log('[-] Lỗi: Điểm mù, không thấy cái rương nào quanh đây!');
+        return; 
+    }
 
     try {
         const chest = await currentBot.openChest(chestBlock);
@@ -375,10 +380,12 @@ async function depositAllKeepOneStack() {
         }
         chest.close();
         await sleep(500); 
-        console.log('[+] Đã gom sạch cà rốt vào kho, chừa lại 1 stack làm giống!');
+        console.log('[+] Đã gom sạch cà rốt vào kho!');
     } catch (err) {
-        console.log('[-] Lỗi tương tác rương: ', err.message);
+        // [FIX]: Nếu lỗi mở rương (timeout), log ra để biết và thoát hàm để bot tiếp tục đi farm
+        console.log('[-] Lỗi tương tác rương (Server không trả lời): ', err.message);
         if (currentBot.currentWindow) currentBot.closeWindow(currentBot.currentWindow); 
+        await sleep(1000); // Đợi 1 giây rồi bỏ qua, cho bot đi farm tiếp
     }
 }
 
